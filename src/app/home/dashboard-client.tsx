@@ -1,3 +1,9 @@
+// Add window.sdomain type declaration
+declare global {
+  interface Window {
+    sdomain?: string;
+  }
+}
 "use client"
 
 import { useState, useEffect } from "react"
@@ -736,14 +742,17 @@ export function DashboardClient({ feedbackUrl, feedback, userCode }: DashboardCl
           </DialogHeader>
           <div className="bg-muted/50 p-6 rounded-xl border border-border/50">
             <code className="text-sm break-all font-mono text-foreground">
-              {`<iframe src="https://tellus.abhiramverse.tech/embed/${userCode}" height="500px" width="1000px"></iframe>`}
+              {typeof window !== "undefined" && window.sdomain
+                ? `<iframe src="${window.sdomain}/embed/${userCode}" height="500px" width="1000px"></iframe>`
+                : `<iframe src="/embed/${userCode}" height="500px" width="1000px"></iframe>`}
             </code>
           </div>
           <Button
             onClick={() => {
-              navigator.clipboard.writeText(
-                `<iframe src="https://tellus.abhiramverse.tech/embed/${userCode}" height="500px" width="1000px"></iframe>`,
-              )
+              const embedUrl = typeof window !== "undefined" && window.sdomain
+                ? `<iframe src="${window.sdomain}/embed/${userCode}" height="500px" width="1000px"></iframe>`
+                : `<iframe src="/embed/${userCode}" height="500px" width="1000px"></iframe>`;
+              navigator.clipboard.writeText(embedUrl)
               setCopyConfirmation("embed")
               setTimeout(() => setCopyConfirmation(null), 2000)
             }}
@@ -754,14 +763,18 @@ export function DashboardClient({ feedbackUrl, feedback, userCode }: DashboardCl
           </Button>
           <p className="text-sm text-muted-foreground">
             Preview your testimonials at:{" "}
-            <a
-              href={`https://tellus.abhiramverse.tech/embed/${userCode}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary underline hover:text-primary/80"
-            >
-              {`https://tellus.abhiramverse.tech/embed/${userCode}`}
-            </a>
+            {typeof window !== "undefined" && window.sdomain ? (
+              <a
+                href={`${window.sdomain}/embed/${userCode}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline hover:text-primary/80"
+              >
+                {`${window.sdomain}/embed/${userCode}`}
+              </a>
+            ) : (
+              <span>{`/embed/${userCode}`}</span>
+            )}
           </p>
         </DialogContent>
       </Dialog>

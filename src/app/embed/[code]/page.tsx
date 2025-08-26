@@ -1,10 +1,14 @@
 // app/embed/[code]/page.tsx
-import { PrismaClient } from '@prisma/client';
+
 import { TestimonialEmbed } from './testimonial-embed';
+import { PrismaClient } from '@prisma/client';
+// Prisma singleton pattern for Next.js
 
-const prisma = new PrismaClient();
+const globalForPrisma = global as unknown as { prisma: PrismaClient };
+const prisma = globalForPrisma.prisma || new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-export default async function EmbedPage({ params }: { params: { code: string } }) {
+export default async function EmbedPage({ params }: any) {
   try {
     const feedback = await prisma.feedback.findMany({
       where: {
