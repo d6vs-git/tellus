@@ -1,0 +1,42 @@
+// schema.prisma - Updated to work with standard MySQL
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(cuid())
+  username  String
+  email     String    @unique
+  code      String    @unique
+  feedback  Feedback[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  name      String
+  feedback  String   @db.Text
+  rating    Float
+  code      String
+  user      User     @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  // Store embeddings as JSON text instead of VECTOR type
+  embedding String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@index([rating])
+  @@index([createdAt])
+  @@map("feedback")
+}
