@@ -1,209 +1,107 @@
-// app/api/search/route.ts - Fixed for standard MySQL without vector search
-import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { AIService } from "@/lib/ai";
-import { getServerSession } from "next-auth/next";
-
-const prisma = new PrismaClient();
-
-// Cosine similarity function for JavaScript
-function cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) return 0;
-    
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    
-    for (let i = 0; i < a.length; i++) {
-        dotProduct += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
-    }
-    
-    if (normA === 0 || normB === 0) return 0;
-    
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-}
+// app/api/search/route.ts
+import { NextRequest, NextResponse } from "next/server"
+import { findUserByCode } from "@/db/user"
+import { getConnection } from "@/db/connect"
+import { embeddingService } from "@/lib/embeddings"
 
 export async function POST(req: NextRequest) {
-    try {
-        const session = await getServerSession();
-        if (!session?.user?.email) {
-            return NextResponse.json(
-                { message: "Unauthorized" },
-                { status: 401 }
-            );
-        }
+  try {
+    const { query, userCode } = await req.json()
 
-        const body = await req.json();
-        const { query, limit = 5, userCode } = body;
+    if (!query?.trim() || !userCode?.trim()) {
+      return NextResponse.json({ error: "Query and user code are required" }, { status: 400 })
+    }
 
-        if (!query) {
-            return NextResponse.json(
-                { message: "Query is required" },
-                { status: 400 }
-            );
-        }
+    const user = await findUserByCode(userCode.trim())
+    if (!user) {
+      return NextResponse.json({ error: "Invalid user code" }, { status: 404 })
+    }
 
-        // Verify user has access to this code
-        const user = await prisma.user.findUnique({
-            where: { email: session.user.email }
-        });
-
-        if (!user || (userCode && user.code !== userCode)) {
-            return NextResponse.json(
-                { message: "Access denied" },
-                { status: 403 }
-            );
-        }
-
-        // Perform text-based search first (always available)
-        const textSearchResults = await prisma.feedback.findMany({
-            where: {
-                code: user.code,
-                OR: [
-                    { feedback: { contains: query } },
-                    { name: { contains: query } }
-                ]
-            },
-            take: limit,
-            orderBy: { createdAt: 'desc' },
-            select: {
-                id: true,
-                name: true,
-                feedback: true,
-                rating: true,
-                createdAt: true,
-                code: true
-            }
-        });
-
-        // Attempt semantic search if embeddings are available
-        let vectorSearchResults: any[] = [];
+    const conn = await getConnection()
+    const trimmedQuery = query.trim()
+    
+    // Run both searches in parallel
+    const [semanticResults, keywordResults] = await Promise.allSettled([
+      // SEMANTIC SEARCH - Only return results with >50% relevance
+      (async () => {
         try {
-            // Generate query embedding
-            const queryEmbedding = await AIService.generateEmbedding(query);
-            // Get all feedbacks for this user
-            const allFeedback = await prisma.feedback.findMany({
-                where: { code: user.code },
-                select: {
-                    id: true,
-                    name: true,
-                    feedback: true,
-                    rating: true,
-                    createdAt: true,
-                    code: true,
-                    // embedding is not in Prisma schema, but we will access it dynamically
-                }
-            });
-            // Calculate similarity scores in JavaScript
-            const scoredFeedback = allFeedback
-                .map(item => {
-                    // @ts-ignore: embedding is not in type but exists in DB
-                    const embeddingRaw = (item as any).embedding;
-                    if (!embeddingRaw) return null;
-                    try {
-                        const embeddingData = typeof embeddingRaw === 'string' 
-                            ? JSON.parse(embeddingRaw)
-                            : embeddingRaw;
-                        if (!Array.isArray(embeddingData) || embeddingData.length === 0) {
-                            return null;
-                        }
-                        const similarity = cosineSimilarity(queryEmbedding, embeddingData);
-                        return {
-                            ...item,
-                            similarity_score: 1 - similarity // Convert to distance for consistency
-                        };
-                    } catch (e) {
-                        console.warn('Failed to parse embedding for feedback:', item.id);
-                        return null;
-                    }
-                })
-                .filter((item): item is any => item !== null && typeof item.similarity_score === 'number' && item.similarity_score < 0.8)
-                .sort((a, b) => {
-                    if (!a || !b) return 0;
-                    return a.similarity_score - b.similarity_score;
-                })
-                .slice(0, limit);
-            vectorSearchResults = scoredFeedback;
-        } catch (embeddingError: any) {
-            console.warn('Semantic search failed, using text search only:', embeddingError?.message);
-        }
-
-        return NextResponse.json({
-            vectorSearch: vectorSearchResults,
-            textSearch: textSearchResults.map(item => ({
-                ...item,
-                createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : item.createdAt
-            })),
-            query,
-            totalResults: {
-                vector: vectorSearchResults.length,
-                text: textSearchResults.length
-            }
-        });
-
-    } catch (error: any) {
-        console.error("Search error:", error);
-        return NextResponse.json(
-            { message: "Search failed", error: error.message },
-            { status: 500 }
-        );
-    }
-}
-
-export async function GET(req: NextRequest) {
-    try {
-        const session = await getServerSession();
-        if (!session?.user?.email) {
-            return NextResponse.json(
-                { message: "Unauthorized" },
-                { status: 401 }
+          const queryEmbedding = await embeddingService.generateEmbedding(trimmedQuery)
+          if (queryEmbedding.length > 0) {
+            const embeddingVector = `[${queryEmbedding.join(',')}]`
+            
+            // Get more results initially to filter down to >50%
+            const [rows]: [any[], any] = await conn.execute(
+              `SELECT *, 
+               (1 - VEC_COSINE_DISTANCE(embedding_vec, ?)) * 100 as relevance_score
+               FROM feedback 
+               WHERE code = ? AND embedding_vec IS NOT NULL
+               ORDER BY relevance_score DESC
+               LIMIT 20`, // Get more to filter down
+              [embeddingVector, userCode]
             );
+            
+            // Filter to only include results with >50% relevance
+            return Array.isArray(rows) ? rows.filter(item => item.relevance_score > 50) : [];
+          }
+          return [];
+        } catch (error) {
+          console.warn("Semantic search failed:", error);
+          return [];
         }
-
-        const url = new URL(req.url);
-        const userCode = url.searchParams.get('code');
-        const query = url.searchParams.get('q');
-        const limit = parseInt(url.searchParams.get('limit') || '10');
-
-        if (!query) {
-            return NextResponse.json(
-                { message: "Query parameter 'q' is required" },
-                { status: 400 }
-            );
+      })(),
+      
+      // KEYWORD SEARCH - Only return results with >50% relevance
+      (async () => {
+        try {
+          const searchQuery = `%${trimmedQuery}%`;
+          
+          // Get results and score them, then filter client-side
+          const [rows]: [any[], any] = await conn.execute(
+            `SELECT *,
+               CASE 
+                 WHEN LOWER(feedback) LIKE LOWER(?) THEN 80
+                 WHEN LOWER(name) LIKE LOWER(?) THEN 60
+                 ELSE 40
+               END as relevance_score
+             FROM feedback 
+             WHERE code = ? 
+               AND (LOWER(feedback) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?))
+             ORDER BY created_at DESC
+             LIMIT 20`, // Get more to filter down
+            [searchQuery, searchQuery, userCode, searchQuery, searchQuery]
+          );
+          
+          // Filter to only include results with >50% relevance
+          return Array.isArray(rows) ? rows.filter(item => item.relevance_score > 50) : [];
+        } catch (error) {
+          console.warn("Keyword search failed:", error);
+          return [];
         }
+      })()
+    ]);
 
-        // Verify user access
-        const user = await prisma.user.findUnique({
-            where: { email: session.user.email }
-        });
+    const semantic = semanticResults.status === 'fulfilled' ? semanticResults.value : [];
+    const keyword = keywordResults.status === 'fulfilled' ? keywordResults.value : [];
+    
+    // Combine and deduplicate results (both should already be >50% relevance)
+    const allResults = [...semantic, ...keyword];
+    const uniqueResults = Array.from(new Map(allResults.map(item => [item.id, item])).values());
+    
+    // Sort by relevance score (highest first)
+    const sortedResults = uniqueResults.sort((a, b) => (b.relevance_score || 0) - (a.relevance_score || 0));
 
-        if (!user || (userCode && user.code !== userCode)) {
-            return NextResponse.json(
-                { message: "Access denied" },
-                { status: 403 }
-            );
-        }
+    return NextResponse.json({
+      semanticResults: semantic,
+      keywordResults: keyword,
+      allResults: sortedResults,
+      total: sortedResults.length,
+      semanticCount: semantic.length,
+      keywordCount: keyword.length,
+      query: trimmedQuery
+    });
 
-        // Perform combined search by calling POST handler directly
-        const fakePostReq = {
-            json: async () => ({ query, userCode: user.code, limit })
-        } as unknown as NextRequest;
-        // @ts-ignore
-        const postResult = await POST(fakePostReq);
-        const searchData = await postResult.json();
-        return NextResponse.json({
-            results: [...(searchData.vectorSearch || []), ...(searchData.textSearch || [])],
-            query,
-            totalResults: (searchData.totalResults?.vector || 0) + (searchData.totalResults?.text || 0)
-        });
-
-    } catch (error: any) {
-        console.error("Search error:", error);
-        return NextResponse.json(
-            { message: "Search failed", error: error.message },
-            { status: 500 }
-        );
-    }
+  } catch (error) {
+    console.error("Search error:", error);
+    return NextResponse.json({ error: "Search failed" }, { status: 500 });
+  }
 }

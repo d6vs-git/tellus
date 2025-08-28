@@ -1,8 +1,23 @@
-import NextAuth from "next-auth"
-import GoogleProvider from "next-auth/providers/google"
-import { PrismaClient } from "@prisma/client"
+import { createUser, findUserByEmail } from "@/db/user";
+import NextAuth from "next-auth";
+import GoogleProvider from "next-auth/providers/google";
 
-const prisma = new PrismaClient()
+declare module "next-auth" {
+  interface User {
+    id?: string;
+    code?: string;
+  }
+
+  interface Session {
+    user: {
+      id?: string;
+      code?: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+    };
+  }
+}
 
 const handler = NextAuth({
   providers: [
@@ -15,28 +30,47 @@ const handler = NextAuth({
     async signIn({ user, account }) {
       if (account?.provider === "google") {
         try {
-          const existingUser = await prisma.user.findUnique({
-            where: { email: user.email! },
-          })
+          // Check if user exists
+          const existingUser = await findUserByEmail(user.email!);
 
           if (!existingUser) {
-            await prisma.user.create({
-              data: {
-                email: user.email!,
-                username: user.name!,
-                code: Math.floor(Math.random() * 1000000).toString()
-              },
-            })
+            // Create new user with generated code
+            await createUser({
+              email: user.email!,
+              username: user.name!,
+              code: Math.floor(Math.random() * 1000000).toString(),
+            });
           }
-          return true
+          return true;
         } catch (error) {
-          console.error("Error during sign in:", error)
-          return false
+          console.error("Error during sign in:", error);
+          return false;
         }
       }
-      return true
+      return true;
+    },
+    async session({ session, token }) {
+      // Add user code to session if needed
+      if (session.user?.email) {
+        try {
+          const dbUser = await findUserByEmail(session.user.email);
+          if (dbUser) {
+            (session.user as any).code = dbUser.code;
+            (session.user as any).id = dbUser.id;
+          }
+        } catch (error) {
+          console.error("Error fetching user data for session:", error);
+        }
+      }
+      return session;
     },
   },
-})
+  // Optional: Handle connection cleanup
+  events: {
+    async signOut() {
+      // You can add cleanup logic here if needed
+    },
+  },
+});
 
-export { handler as GET, handler as POST }
+export { handler as GET, handler as POST };
