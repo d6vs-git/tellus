@@ -37,7 +37,7 @@ interface InsightsSummary {
 }
 
 // Email utility function with better error handling
-export async function sendEmail(
+async function sendEmail(
   to: string,
   subject: string,
   text: string,
