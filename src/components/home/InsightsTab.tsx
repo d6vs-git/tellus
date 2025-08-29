@@ -26,6 +26,7 @@ import {
   Clock,
   Send
 } from "lucide-react";
+import LoadingOverlay from "@/components/ui/LoadingOverlay";
 import { pdf } from '@react-pdf/renderer';
 import ProfessionalPDFDocument from '../pdfreport/ProfessionalPDFDocument';
 import { SentimentPieChart } from "@/components/visualizations/SentimentPieChart";
@@ -331,28 +332,7 @@ Feedback Analytics Team`;
   );
 
   if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="space-y-4">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                <p className="text-lg font-medium text-foreground mb-2">Processing AI Insights</p>
-                <p className="text-sm text-muted-foreground">Following multi-step analysis workflow</p>
-              </div>
-              
-              {/* Processing Steps */}
-              <div className="space-y-2">
-                {processingSteps.map((step) => (
-                  <StepIndicator key={step.id} step={step} />
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <LoadingOverlay />;
   }
 
   if (error) {
