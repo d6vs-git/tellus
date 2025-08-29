@@ -1,8 +1,10 @@
 "use client"
 
+
 import { useSession } from "next-auth/react"
 import { useRouter, usePathname } from "next/navigation"
 import { useEffect } from "react"
+import LoadingOverlay from "./ui/LoadingOverlay"
 
 export function SessionRedirect() {
   const { data: session, status } = useSession()
@@ -15,5 +17,8 @@ export function SessionRedirect() {
     }
   }, [session, status, pathname, router])
 
+  if (status === "loading") {
+    return <LoadingOverlay />
+  }
   return null
 }

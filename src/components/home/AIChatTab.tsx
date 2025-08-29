@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react";
+import LoadingOverlay from "@/components/ui/LoadingOverlay";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -36,7 +37,7 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
     {
       id: '1',
       role: 'assistant',
-      content: "**Hello! I'm your Feedback Analysis Assistant**\n\nI can help you analyze customer feedback data. Ask me about:\n\n• Feedback counts and ratings\n• Trends and patterns\n• Specific feedback topics\n• Export and reporting\n\nWhat would you like to know?",
+      content: "**Hello! I'm your Feedback Analysis Assistant**\n\nI can help you analyze customer feedback data. What would you like to know?",
       timestamp: new Date()
     }
   ]);
@@ -246,13 +247,6 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
     );
   };
 
-  const quickSuggestions = [
-    "Feedback count today?",
-    "Average rating this week?",
-    "Recent trends",
-    "Generate me a detailed analysis"
-  ];
-
   return (
     <Card>
       <CardHeader>
@@ -265,8 +259,6 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-       
-
         {/* Chat Messages */}
         <div className="h-80 overflow-y-auto space-y-4 p-2 border rounded-lg">
           {messages.map((message) => (
@@ -286,7 +278,7 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
                     {message.timestamp.toLocaleTimeString()}
                   </span>
                 </div>
-                <div className={`text-sm ${message.role === 'user' ? 'text-black' : 'text-primary'}`}>
+                <div className={`text-sm ${message.role === 'user' ? 'text-black' : 'text-primary'}`}> 
                   <MarkdownRenderer content={message.content} />
                 </div>
 
@@ -296,19 +288,9 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
               </div>
             </div>
           ))}
-          
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className=" p-3 rounded-lg max-w-xs">
-                <div className="flex items-center gap-2">
-                </div>
-              </div>
-            </div>
-          )}
-          
+          {isLoading && <LoadingOverlay />}
           <div ref={messagesEndRef} />
         </div>
-
         {/* Input Area */}
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -323,26 +305,10 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
             <Button 
               onClick={handleSendMessage} 
               disabled={isLoading || !inputMessage.trim()}
-              className="h-auto"
+              className="h-auto rounded-full"
             >
               <Send className="w-4 h-4" />
             </Button>
-          </div>
-
-          {/* Quick Suggestions */}
-          <div className="flex flex-wrap gap-1">
-            {quickSuggestions.map((suggestion) => (
-              <Button
-                key={suggestion}
-                variant="outline"
-                size="sm"
-                onClick={() => setInputMessage(suggestion)}
-                disabled={isLoading}
-                className="text-xs h-7"
-              >
-                {suggestion}
-              </Button>
-            ))}
           </div>
         </div>
       </CardContent>
