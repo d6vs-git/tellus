@@ -130,73 +130,78 @@ Feedback Analytics Team`;
     );
   };
 
-  const loadInsights = async (options: {
-    search?: string;
-  } = {}) => {
-    // Prevent event object from being passed as options
-    if (typeof options === 'object' && options !== null && 'preventDefault' in options) {
-      return;
-    }
 
-    // Validate userCode
+  // Animate step-by-step progress regardless of backend speed
+  const loadInsights = async (options: { search?: string } = {}) => {
+    if (typeof options === 'object' && options !== null && 'preventDefault' in options) return;
     if (!userCode || typeof userCode !== 'string') {
       setError('Invalid user code provided');
       return;
     }
-
     setIsLoading(true);
     setError(null);
     setEmailSuccess(null);
     setProcessingSteps(initializeSteps());
 
+    // Step order for animation
+    const stepOrder = ['data', 'search', 'llm', 'analysis', 'complete'];
+    const minStepTime = 700; // ms per step
+
     try {
-      // Step 1: Data ingestion
-      updateStepStatus('data', 'processing');
-      
+      // Start all steps as pending
+      let stepIdx = 0;
+      const animateStep = (id: string, status: ProcessingStep['status']) => {
+        updateStepStatus(id, status);
+      };
+
+      // Start first step
+      animateStep(stepOrder[0], 'processing');
+
+      // Start backend fetch in parallel
       const requestBody = {
         userCode: userCode,
         timeframe: 30,
         searchQuery: options.search || searchQuery,
       };
-
-      const response = await fetch('/api/ai-insights', {
+      const fetchPromise = fetch('/api/ai-insights', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
 
+      // Animate each step in sequence
+      for (let i = 0; i < stepOrder.length; i++) {
+        if (i > 0) {
+          // Complete previous step
+          animateStep(stepOrder[i - 1], 'completed');
+          // Start current step
+          animateStep(stepOrder[i], 'processing');
+        }
+        // Wait for minStepTime before next step
+        // If last step, break early to wait for backend
+        if (i < stepOrder.length - 1) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise(res => setTimeout(res, minStepTime));
+        }
+      }
+
+      // Wait for backend to finish (if not already)
+      const response = await fetchPromise;
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
       }
-
-      updateStepStatus('data', 'completed');
-      updateStepStatus('search', 'processing');
-      
-      // Simulate progress through steps
-      setTimeout(() => updateStepStatus('search', 'completed'), 500);
-      setTimeout(() => updateStepStatus('llm', 'processing'), 1000);
-      setTimeout(() => updateStepStatus('llm', 'completed'), 1500);
-      setTimeout(() => updateStepStatus('analysis', 'processing'), 2000);
-
       const data = await response.json();
-      
-      updateStepStatus('analysis', 'completed');
-      updateStepStatus('complete', 'completed');
-      
+
+      // Complete all steps
+      stepOrder.forEach(id => animateStep(id, 'completed'));
       setInsights(data);
-      
     } catch (err: any) {
       console.error('Failed to load insights:', err);
       setError(err.message || 'Failed to load AI insights. Please try again.');
-      
       // Update failed step
       const currentStep = processingSteps.find(step => step.status === 'processing');
-      if (currentStep) {
-        updateStepStatus(currentStep.id, 'error');
-      }
+      if (currentStep) updateStepStatus(currentStep.id, 'error');
     } finally {
       setIsLoading(false);
     }
