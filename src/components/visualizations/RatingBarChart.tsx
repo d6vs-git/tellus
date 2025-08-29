@@ -43,7 +43,7 @@ export function RatingBarChart({ data }: RatingBarChartProps) {
             <div className="text-lg font-bold text-foreground">{item.count}</div>
             <div className="text-xs text-muted-foreground">{item.rating}★</div>
             <div className="text-xs font-medium text-foreground/70">
-              {item.percentage}%
+              {Number.isFinite(item.percentage) ? item.percentage : 0}%
             </div>
           </div>
         ))}

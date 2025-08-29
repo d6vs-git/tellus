@@ -2,11 +2,11 @@ import { getServerSession } from "next-auth/next";
 import { redirect } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { OverviewTab } from "@/components/dashboard/OverviewTab";
-import { SearchTab } from "@/components/dashboard/SearchTab";
-import { InsightsTab } from "@/components/dashboard/InsightsTab";
-import { AIChatTab } from "@/components/dashboard/AIChatTab";
-import { FeedbackTab } from "@/components/dashboard/FeedbackTab";
+import { OverviewTab } from "@/components/home/OverviewTab";
+import { SearchTab } from "@/components/home/SearchTab";
+import InsightsTab from "@/components/home/InsightsTab";
+import { AIChatTab } from "@/components/home/AIChatTab";
+import { FeedbackTab } from "@/components/home/FeedbackTab";
 import { MessageSquare, Search, Brain, Sparkles, Target } from "lucide-react";
 import { findUserByEmail } from "@/db/user";
 

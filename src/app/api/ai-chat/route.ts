@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
 import { getConnection } from "@/db/connect";
+import { cohereService } from "@/lib/cohere";
+import { geminiService } from "@/lib/gemini";
+
+// Database schema information for the LLM
+const SCHEMA_INFO = `
+-- Table: users
+-- Description: Stores user account information.
+-- Columns: id, username, email, code, created_at, updated_at
+
+-- Table: feedback
+-- Description: Stores feedback submissions from users, linked by code.
+-- Columns: id, name, feedback, rating, code, user_id, created_at, updated_at, embedding_vec
+`;
 
 export async function POST(req: NextRequest) {
   let conn;
   try {
-    const session = await getServerSession();
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { message: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-
     const body = await req.json();
-    const { userCode, message, chatHistory = [] } = body;
+    const { userCode, message } = body;
 
     if (!userCode || !message) {
       return NextResponse.json(
@@ -25,178 +29,30 @@ export async function POST(req: NextRequest) {
 
     conn = await getConnection();
 
-    // Verify user access
+    // Verify user exists with this code
     const [userRows] = await conn.execute(
-      'SELECT id, code FROM users WHERE email = ?',
-      [session.user.email]
-    ) as any;
-
-    const user = userRows[0];
-    if (!user || user.code !== userCode) {
-      return NextResponse.json(
-        { message: "Access denied" },
-        { status: 403 }
-      );
-    }
-
-    // Step 1: Ingest & Index Data - Fetch relevant feedback
-    const [feedbackRows] = await conn.execute(
-      `SELECT id, name, feedback, rating, created_at, embedding_vec 
-       FROM feedback 
-       WHERE code = ? 
-       ORDER BY created_at DESC 
-       LIMIT 100`,
+      'SELECT id, username FROM users WHERE code = ?',
       [userCode]
     ) as any;
 
-    const feedbacks = feedbackRows;
-
-    // Step 2: Search Your Data - Semantic search using embeddings
-    let relevantFeedbacks = [];
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-
-    if (geminiApiKey && message.trim().length > 3) {
-      try {
-        // Generate embedding for the query
-        const embeddingResponse = await fetch(
-          'https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent',
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-goog-api-key': geminiApiKey
-            },
-            body: JSON.stringify({
-              model: "models/embedding-001",
-              content: {
-                parts: [{ text: message }]
-              }
-            })
-          }
-        );
-
-        if (embeddingResponse.ok) {
-          const embeddingData = await embeddingResponse.json();
-          const queryEmbedding = embeddingData.embedding?.values;
-
-          if (queryEmbedding && Array.isArray(queryEmbedding)) {
-            // Semantic search through feedbacks
-            for (const feedback of feedbacks) {
-              if (feedback.embedding_vec) {
-                try {
-                  const embeddingStr = feedback.embedding_vec.replace(/[\[\]]/g, '');
-                  const feedbackEmbedding = embeddingStr.split(',').map(Number);
-                  
-                  if (feedbackEmbedding.length === queryEmbedding.length) {
-                    const similarity = cosineSimilarity(queryEmbedding, feedbackEmbedding);
-                    if (similarity > 0.3) {
-                      relevantFeedbacks.push({
-                        ...feedback,
-                        similarity,
-                        embedding_vec: undefined // Remove embedding from response
-                      });
-                    }
-                  }
-                } catch (e) {
-                  // Skip invalid embeddings
-                }
-              }
-            }
-
-            // Sort by similarity and limit results
-            relevantFeedbacks.sort((a, b) => b.similarity - a.similarity);
-            relevantFeedbacks = relevantFeedbacks.slice(0, 10);
-          }
-        }
-      } catch (embeddingError) {
-        console.warn('Semantic search failed, using text search:', embeddingError);
-      }
+    if (!userRows || userRows.length === 0) {
+      return NextResponse.json(
+        { message: "Invalid user code" },
+        { status: 404 }
+      );
     }
 
-    // Fallback to text search if no semantic results
-    if (relevantFeedbacks.length === 0) {
-      relevantFeedbacks = feedbacks.filter((f: any) =>
-        f.feedback.toLowerCase().includes(message.toLowerCase()) ||
-        f.name.toLowerCase().includes(message.toLowerCase())
-      ).slice(0, 10);
+    // Check if this is a semantic search question
+    const isSemanticQuery = message.toLowerCase().includes("similar to") || 
+                           message.toLowerCase().includes("like this") || 
+                           message.toLowerCase().includes("about");
+
+    let responseData;
+    if (isSemanticQuery) {
+      responseData = await handleVectorSearch(conn, userCode, message);
+    } else {
+      responseData = await handleStructuredQuery(conn, userCode, message);
     }
-
-    // Step 3: Chain LLM Calls - Generate response with context
-    const feedbackContext = relevantFeedbacks.length > 0
-      ? relevantFeedbacks.map((f: any) => 
-          `Rating: ${f.rating}/5 - "${f.feedback}" (by ${f.name})`
-        ).join('\n\n')
-      : 'No specific feedback matches your query.';
-
-    const prompt = `
-You are a helpful AI assistant analyzing customer feedback data. The user is asking about their feedback collection.
-
-**User Query:** "${message}"
-
-**Relevant Feedback Context:**
-${feedbackContext}
-
-**Overall Statistics:**
-
-**Chat History:**
-${chatHistory.slice(-5).map((msg: any) => `${msg.role}: ${msg.content}`).join('\n')}
-
-Please provide a helpful, analytical response that:
-1. Answers the user's question directly
-2. References specific feedback when relevant
-3. Provides insights and patterns from the data
-4. Suggests actionable recommendations
-5. Maintains a conversational, helpful tone
-
-If the query is a greeting or unrelated to feedback, respond appropriately while gently guiding back to feedback topics.
-`;
-
-    // Step 4: Generate AI response
-    const geminiResponse = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-goog-api-key': geminiApiKey!
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: prompt }]
-            }
-          ],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 1024
-          }
-        })
-      }
-    );
-
-    if (!geminiResponse.ok) {
-      throw new Error(`Gemini API error: ${geminiResponse.statusText}`);
-    }
-
-    const geminiData = await geminiResponse.json();
-    const aiResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 
-                      "I apologize, but I'm having trouble generating a response right now.";
-
-    // Step 5: Prepare response with potential external tool integrations
-    const responseData = {
-      message: aiResponse,
-      relevantFeedback: relevantFeedbacks.map((f: any) => ({
-        id: f.id,
-        name: f.name,
-        feedback: f.feedback,
-        rating: f.rating,
-        created_at: f.created_at
-      })),
-      suggestedActions: generateSuggestedActions(message, relevantFeedbacks),
-      timestamp: new Date().toISOString()
-    };
 
     return NextResponse.json(responseData);
 
@@ -216,50 +72,104 @@ If the query is a greeting or unrelated to feedback, respond appropriately while
   }
 }
 
-// Helper function for cosine similarity
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+async function handleVectorSearch(conn: any, userCode: string, message: string): Promise<any> {
+  try {
+    // Extract search phrase from message
+    let searchPhrase = message;
+    if (message.includes("'")) {
+      searchPhrase = message.split("'")[1];
+    } else if (message.toLowerCase().includes("similar to")) {
+      searchPhrase = message.toLowerCase().split("similar to")[1].trim();
+    }
+
+    // Perform semantic search
+    const similarFeedback = await cohereService.searchSimilarFeedback(searchPhrase, userCode, conn);
+    
+    // Get analytics for context
+    const analytics = await getAnalytics(conn, userCode);
+    
+    // Generate natural language response
+    const aiResponse = await geminiService.generateNaturalResponse(
+      userCode, 
+      message, 
+      similarFeedback, 
+      analytics
+    );
+
+    return {
+      message: aiResponse,
+      relevantFeedback: similarFeedback,
+      analytics: analytics
+    };
+
+  } catch (error) {
+    console.error("Vector search handling failed:", error);
+    // Natural fallback response
+    return {
+      message: "I'm having trouble finding similar feedback right now. Could you try asking in a different way?",
+      error: "Vector search failed"
+    };
   }
-  
-  if (normA === 0 || normB === 0) return 0;
-  
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// Generate suggested actions based on query and feedback
-function generateSuggestedActions(query: string, feedback: any[]): string[] {
-  const actions: string[] = [];
-  const queryLower = query.toLowerCase();
+async function handleStructuredQuery(conn: any, userCode: string, message: string): Promise<any> {
+  try {
+    // Check if this is a request for a report/analysis
+    const isReportRequest = message.toLowerCase().includes("report") || 
+                           message.toLowerCase().includes("analyse") || 
+                           message.toLowerCase().includes("analyze") ||
+                           message.toLowerCase().includes("summary");
+    
+    // Generate SQL query using Gemini
+    const sqlQuery = await geminiService.generateSQLQuery(userCode, message, SCHEMA_INFO);
+    
+    // Execute the query
+    const [results] = await conn.execute(sqlQuery) as any;
+    
+    // Get analytics for context
+    const analytics = await getAnalytics(conn, userCode);
+    
+    let aiResponse;
+    if (isReportRequest) {
+      // Generate comprehensive report
+      aiResponse = await geminiService.generateReportResponse(userCode, results, analytics);
+    } else {
+      // Generate natural response
+      aiResponse = await geminiService.generateNaturalResponse(userCode, message, results, analytics);
+    }
 
-  if (queryLower.includes('export') || queryLower.includes('download')) {
-    actions.push('EXPORT_CSV');
-    actions.push('EXPORT_PDF');
+    return {
+      message: aiResponse,
+      query: sqlQuery, // Keep for debugging but frontend won't show this
+      results: results, // Keep for debugging
+      analytics: analytics
+    };
+
+  } catch (error) {
+    console.error("Structured query handling failed:", error);
+    // Natural fallback response
+    return {
+      message: "I encountered an issue processing your request. Could you please try rephrasing your question?",
+      error: "Query execution failed"
+    };
   }
+}
 
-  if (queryLower.includes('contact') || queryLower.includes('follow up')) {
-    actions.push('CREATE_FOLLOWUP_TASK');
-  }
+async function getAnalytics(conn: any, userCode: string): Promise<any> {
+  const [analytics] = await conn.execute(`
+    SELECT 
+      COUNT(*) as total,
+      AVG(rating) as avgRating,
+      COUNT(CASE WHEN rating >= 4 THEN 1 END) as positiveCount,
+      COUNT(CASE WHEN rating <= 2 THEN 1 END) as criticalCount
+    FROM feedback 
+    WHERE code = ?
+  `, [userCode]) as any;
 
-  if (queryLower.includes('trend') || queryLower.includes('analyze')) {
-    actions.push('GENERATE_REPORT');
-  }
-
-  if (feedback.some(f => f.rating <= 2)) {
-    actions.push('REVIEW_CRITICAL_FEEDBACK');
-  }
-
-  if (feedback.some(f => f.rating >= 4)) {
-    actions.push('HIGHLIGHT_POSITIVE_FEEDBACK');
-  }
-
-  return actions;
+  return {
+    total: analytics[0]?.total || 0,
+    avgRating: analytics[0]?.avgRating ? Number(analytics[0].avgRating).toFixed(1) : "N/A",
+    positiveCount: analytics[0]?.positiveCount || 0,
+    criticalCount: analytics[0]?.criticalCount || 0
+  };
 }

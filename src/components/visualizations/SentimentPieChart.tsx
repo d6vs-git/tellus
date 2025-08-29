@@ -40,7 +40,9 @@ export function SentimentPieChart({ data }: SentimentPieChartProps) {
             </div>
             <div className="text-xs text-muted-foreground capitalize">{item.name}</div>
             <div className="text-xs font-medium" style={{ color: item.color }}>
-              {total > 0 ? Math.round((item.value / total) * 100) : 0}%
+              {Number.isFinite(item.value) && Number.isFinite(total) && total > 0
+                ? Math.round((item.value / total) * 100)
+                : 0}%
             </div>
           </div>
         ))}

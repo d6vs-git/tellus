@@ -41,27 +41,36 @@ interface DashboardStats {
 
 export function OverviewTab({ userCode }: OverviewTabProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [feedbackUrl, setFeedbackUrl] = useState("");
   const [copyConfirmation, setCopyConfirmation] = useState<string | null>(null);
   const [isEmbedCodeOpen, setIsEmbedCodeOpen] = useState(false);
 
   useEffect(() => {
     if (!userCode) return;
-    setFeedbackUrl(`${window.location.origin}/${userCode}`);
-    loadStats(userCode);
+  setFeedbackUrl(`${window.location.origin}/${userCode}`);
+  loadStats(userCode);
   }, [userCode]);
 
   const loadStats = async (code: string) => {
+    setLoading(true);
+    setError(null);
     try {
       const response = await fetch(`/api/dashboard-stats?code=${code}`);
       if (response.ok) {
         const statsData = await response.json();
         setStats(statsData);
       } else {
-        console.error("Failed to load dashboard stats");
+        const err = await response.json();
+        setError(err?.error || "Failed to load dashboard stats");
+        setStats(null);
       }
-    } catch (error) {
-      console.error("Failed to load stats:", error);
+    } catch (err: any) {
+      setError(err?.message || "Network error");
+      setStats(null);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -83,26 +92,39 @@ export function OverviewTab({ userCode }: OverviewTabProps) {
   };
 
   if (!stats) {
-    return (
-      <div className="space-y-8">
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map((item) => (
-            <Card key={item} className="animate-pulse">
-              <CardHeader className="flex flex-row items-center justify-between pb-3">
-                <div className="h-4 bg-muted rounded w-24"></div>
-                <div className="p-2 rounded-lg bg-muted">
-                  <div className="h-5 w-5 bg-muted-foreground/20 rounded"></div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="h-8 bg-muted rounded w-16 mb-2"></div>
-                <div className="h-4 bg-muted rounded w-20"></div>
-              </CardContent>
-            </Card>
-          ))}
+    if (loading) {
+      return (
+        <div className="space-y-8">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((item) => (
+              <Card key={item} className="animate-pulse">
+                <CardHeader className="flex flex-row items-center justify-between pb-3">
+                  <div className="h-4 bg-muted rounded w-24"></div>
+                  <div className="p-2 rounded-lg bg-muted">
+                    <div className="h-5 w-5 bg-muted-foreground/20 rounded"></div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-8 bg-muted rounded w-16 mb-2"></div>
+                  <div className="h-4 bg-muted rounded w-20"></div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
+    if (error) {
+      return (
+        <div className="space-y-8">
+          <div className="text-center text-destructive font-semibold py-8">
+            {error}
+          </div>
+        </div>
+      );
+    }
+    // No stats, not loading, no error
+    return null;
   }
 
   return (

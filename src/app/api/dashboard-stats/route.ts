@@ -5,55 +5,41 @@ export async function GET(req: NextRequest) {
   let conn;
   try {
     const url = new URL(req.url);
-    const userCode = url.searchParams.get('code');
-
+    const userCode = url.searchParams.get("code");
     if (!userCode) {
       return NextResponse.json(
-        { message: "Code parameter is required" },
+        { error: "Code parameter is required" },
         { status: 400 }
       );
     }
-
     conn = await getConnection();
-
-    // Get all feedback for this user code
     const [feedbackRows] = await conn.execute(
-      `SELECT name, feedback, rating, created_at 
-       FROM feedback 
-       WHERE code = ? 
-       ORDER BY created_at DESC`,
+      `SELECT name, feedback, rating, created_at FROM feedback WHERE code = ? ORDER BY created_at DESC`,
       [userCode]
     ) as any;
-
-    const feedbacks = feedbackRows;
-
-    // Calculate statistics
-    const uniqueUsers = new Set(feedbacks.map((f: any) => f.name)).size;
+    const feedbacks = Array.isArray(feedbackRows) ? feedbackRows : [];
+    // Defensive checks for stats
+    const uniqueUsers = feedbacks.length > 0 ? new Set(feedbacks.map((f: any) => f.name)).size : 0;
     const totalFeedback = feedbacks.length;
-    const averageRating = totalFeedback > 0 
-      ? feedbacks.reduce((sum: number, f: any) => sum + f.rating, 0) / totalFeedback 
+    const averageRating = totalFeedback > 0
+      ? feedbacks.reduce((sum: number, f: any) => sum + (typeof f.rating === "number" ? f.rating : 0), 0) / totalFeedback
       : 0;
-
-    // Simple sentiment analysis (count positive ratings >= 4 as positive sentiment)
-    const positiveFeedbackCount = feedbacks.filter((f: any) => f.rating >= 4).length;
-    const positivePercentage = totalFeedback > 0 
-      ? Math.round((positiveFeedbackCount / totalFeedback) * 100) 
+    const positiveFeedbackCount = feedbacks.filter((f: any) => typeof f.rating === "number" && f.rating >= 4).length;
+    const positivePercentage = totalFeedback > 0
+      ? Math.round((positiveFeedbackCount / totalFeedback) * 100)
       : 0;
-
-    // Return only the required data
     return NextResponse.json({
       uniqueUsers,
       totalFeedback,
       averageRating: parseFloat(averageRating.toFixed(1)),
-      positivePercentage
+      positivePercentage,
     });
-
   } catch (error: any) {
-    console.error("Dashboard stats error:", error);
+    // No console.log in production; return error response
     return NextResponse.json(
-      { 
-        message: "Failed to fetch dashboard stats",
-        error: error.message 
+      {
+        error: "Failed to fetch dashboard stats",
+        details: error?.message || "Unknown error",
       },
       { status: 500 }
     );
@@ -61,9 +47,7 @@ export async function GET(req: NextRequest) {
     if (conn) {
       try {
         await conn.end();
-      } catch (e) {
-        // Ignore errors if connection is already closed
-      }
+      } catch {}
     }
   }
 }
