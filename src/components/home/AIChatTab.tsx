@@ -41,6 +41,7 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
       timestamp: new Date()
     }
   ]);
+  const [aiLimitBanner, setAiLimitBanner] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [quickStats, setQuickStats] = useState<QuickStat[]>([]);
@@ -132,12 +133,23 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending message:', error);
+      let content = "I'm having trouble connecting right now. Please try again in a moment.";
+      if (error && typeof error.message === 'string') {
+        content = error.message;
+        if (content.toLowerCase().includes('too many requests') || content.toLowerCase().includes('quota')) {
+          content = `**The AI is currently handling too many requests or your quota has been exceeded.**\nPlease give it a rest for a few minutes and try again. If this persists, check your plan and billing details: [Gemini API Rate Limits](https://ai.google.dev/gemini-api/docs/rate-limits)`;
+          setAiLimitBanner(
+            'The AI is currently handling too many requests or your quota has been exceeded. Please give it a rest for a few minutes and try again. If this persists, check your plan and billing details: '
+            + '<a href="https://ai.google.dev/gemini-api/docs/rate-limits" target="_blank" class="underline text-blue-600">Gemini API Rate Limits</a>'
+          );
+        }
+      }
       const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "I'm having trouble connecting right now. Please try again in a moment.",
+        content,
         timestamp: new Date()
       };
       setMessages(prev => [...prev, errorMessage]);
@@ -259,6 +271,9 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {aiLimitBanner && (
+          <div className="mb-2 p-3 rounded-lg bg-yellow-100 border border-yellow-400 text-yellow-900 text-sm text-center" dangerouslySetInnerHTML={{ __html: aiLimitBanner }} />
+        )}
         {/* Chat Messages */}
         <div className="h-80 overflow-y-auto space-y-4 p-2 border rounded-lg">
           {messages.map((message) => (
@@ -288,7 +303,21 @@ export function AIChatTab({ userCode }: AIChatTabProps) {
               </div>
             </div>
           ))}
-          {isLoading && <LoadingOverlay />}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="max-w-xs p-3 rounded-lg shadow-sm border bg-primary/10 text-primary border-primary/20">
+                <div className="flex items-center gap-2 mb-1">
+                  <Bot className="w-3 h-3" />
+                  <span className="text-xs opacity-70 text-black">...</span>
+                </div>
+                <div className="text-sm text-primary flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                  <span className="inline-block w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                  <span className="inline-block w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                </div>
+              </div>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
         {/* Input Area */}

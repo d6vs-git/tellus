@@ -227,7 +227,16 @@ Keep the response under 1500 words and focus on actionable insights.
 
     if (!initialResponse.ok) {
       const errorText = await initialResponse.text().catch(() => 'Unknown error');
-      throw new Error(`Gemini API error: ${initialResponse.status} - ${errorText}`);
+      // Try to parse errorText for quota/rate limit errors
+      let userMessage = `Gemini API error: ${initialResponse.status}`;
+      try {
+        const errObj = JSON.parse(errorText);
+        if (errObj?.error?.code === 429 || (errObj?.error?.status === 'RESOURCE_EXHAUSTED')) {
+          userMessage =
+            "The AI is currently handling too many requests or your quota has been exceeded. Please give it a rest for a few minutes and try again. If this persists, check your plan and billing details: https://ai.google.dev/gemini-api/docs/rate-limits";
+        }
+      } catch {}
+      throw new Error(userMessage);
     }
 
     const initialData = await initialResponse.json();

@@ -199,7 +199,12 @@ Feedback Analytics Team`;
       setInsights(data);
     } catch (err: any) {
       console.error('Failed to load insights:', err);
-      setError(err.message || 'Failed to load AI insights. Please try again.');
+      let errorMsg = err.message || 'Failed to load AI insights. Please try again.';
+      if (typeof errorMsg === 'string' && errorMsg.includes('too many requests') || errorMsg.includes('quota')) {
+        errorMsg = `[1mThe AI is currently handling too many requests or your quota has been exceeded.[22m\nPlease give it a rest for a few minutes and try again. If this persists, check your plan and billing details: ` +
+          `<a href="https://ai.google.dev/gemini-api/docs/rate-limits" target="_blank" class="underline text-blue-600">Gemini API Rate Limits</a>`;
+      }
+      setError(errorMsg);
       // Update failed step
       const currentStep = processingSteps.find(step => step.status === 'processing');
       if (currentStep) updateStepStatus(currentStep.id, 'error');
@@ -332,26 +337,58 @@ Feedback Analytics Team`;
   );
 
   if (isLoading) {
-    return <LoadingOverlay />;
-  }
-
-  if (error) {
     return (
       <div className="space-y-6">
-        <Card className="border-red-200 bg-red-50">
+        <Card>
           <CardContent className="pt-6">
-            <div className="text-center py-8">
-              <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-              <p className="text-lg font-medium text-red-700 mb-2">Error Loading Insights</p>
-              <p className="text-sm text-red-600 mb-4">{error}</p>
-              <Button onClick={() => loadInsights()} variant="outline" className="border-red-300">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Try Again
-              </Button>
+            <div className="space-y-4">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p className="text-lg font-medium text-foreground mb-2">Processing AI Insights</p>
+                <p className="text-sm text-muted-foreground">Following multi-step analysis workflow</p>
+              </div>
+              {/* Processing Steps */}
+              <div className="space-y-2">
+                {processingSteps.map((step) => (
+                  <StepIndicator key={step.id} step={step} />
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
       </div>
+    );
+  }
+
+  if (error) {
+    // Show a full-width, fixed, highly visible banner if the error is about rate limit/quota
+    const isAiLimit = typeof error === 'string' && (error.toLowerCase().includes('too many requests') || error.toLowerCase().includes('quota'));
+    return (
+      <>
+        {isAiLimit && (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', zIndex: 9999 }}>
+            <div className="w-full bg-yellow-400 text-black font-bold py-3 px-4 text-center shadow-lg border-b border-yellow-600 animate-pulse">
+              <span className="text-lg">⚠️ The AI is currently handling too many requests or your quota has been exceeded. Please give it a rest for a few minutes and try again.<br />
+              If this persists, check your plan and billing details: <a href="https://ai.google.dev/gemini-api/docs/rate-limits" target="_blank" className="underline text-blue-800">Gemini API Rate Limits</a></span>
+            </div>
+          </div>
+        )}
+        <div className="space-y-6 mt-16">
+          <Card className="border-red-200 bg-red-50">
+            <CardContent className="pt-6">
+              <div className="text-center py-8">
+                <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+                <p className="text-lg font-medium text-red-700 mb-2">Error Loading Insights</p>
+                <p className="text-sm text-red-600 mb-4" dangerouslySetInnerHTML={{ __html: error }} />
+                <Button onClick={() => loadInsights()} variant="outline" className="border-red-300">
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Try Again
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </>
     );
   }
 

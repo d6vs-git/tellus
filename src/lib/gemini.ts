@@ -34,6 +34,12 @@ export class GeminiService {
       );
 
       if (!response.ok) {
+        if (response.status === 429) {
+          // Too Many Requests: Provide a user-friendly message
+          throw new Error(
+            "The AI is currently handling too many requests. Please give it a rest for a few minutes and try again. It's on hot now—access it after some time!"
+          );
+        }
         throw new Error(`Gemini API error: ${response.statusText}`);
       }
 
